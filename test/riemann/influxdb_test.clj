@@ -30,25 +30,50 @@
 ; integration tests. --Kyle, Sep 2015 :)
 
 (deftest ^:influxdb ^:integration influxdb-test
-  (let [k (influxdb/influxdb
-            {:host (or (System/getenv "INFLUXDB_HOST") "localhost")
-             :db "riemann_test"})]
-    (k {:host "riemann.local"
-        :service "influxdb test"
-        :state "ok"
-        :description "all clear, uh, situation normal"
-        :metric -2
-        :time (unix-time)})
-    (k {:service "influxdb test"
-        :state "ok"
-        :description "all clear, uh, situation normal"
-        :metric 3.14159
-        :time (unix-time)})
-    (k {:host "no-service.riemann.local"
-        :state "ok"
-        :description "Missing service, not transmitted"
-        :metric 4
-        :time (unix-time)})))
+  (testing "deprecated influxdb stream"
+    (let [k (influxdb/influxdb
+             {:host (or (System/getenv "INFLUXDB_HOST") "localhost")
+              :db "riemann_test"})]
+      (k {:host "riemann.local"
+          :service "influxdb test"
+          :state "ok"
+          :description "all clear, uh, situation normal"
+          :metric -2
+          :time (unix-time)})
+      (k {:service "influxdb test"
+          :state "ok"
+          :description "all clear, uh, situation normal"
+          :metric 3.14159
+          :time (unix-time)})
+      (k {:host "no-service.riemann.local"
+          :state "ok"
+          :description "Missing service, not transmitted"
+          :metric 4
+          :time (unix-time)})))
+
+  (testing "new influxdb stream"
+    (let [k (influxdb/influxdb
+             {:host (or (System/getenv "INFLUXDB_HOST") "localhost")
+              :version :new-stream
+              })]
+      (k {:time 1428366765
+          :tags {:foo "bar"
+                 :bar "baz"}
+          :precision :milliseconds
+          :db "riemann_test"
+          :measurement "measurement"
+          :fields {:alice "bob"}})
+      (k {:time 1428366765
+          :tags {:foo "bar"
+                 :bar "baz"}
+          :precision :seconds
+          :db "riemann_test"
+          :consistency "ALL"
+          :retention "autogen"
+          :measurement "measurement"
+          :fields {:alice "bob"}})
+      ))
+  )
 
 (deftest event-fields
   (is (= (influxdb/event-fields
@@ -116,12 +141,12 @@
   (is (= 1 (influxdb/convert-time 1 :default))
       "seconds -> seconds (default)"))
 
-(deftest point-conversion
-  (is (nil? (influxdb/event->point {:service "foo test" :time 1} {:tag-fields #{}}))
+(deftest point-conversion-deprecated
+  (is (nil? (influxdb/event->point-9 {:service "foo test" :time 1} {:tag-fields #{}}))
       "Event with no metric is converted to nil")
 
   (testing "Minimal event is converted to point fields"
-    (let [point (influxdb/event->point {:host "host-01"
+    (let [point (influxdb/event->point-9 {:host "host-01"
                                         :service "test service"
                                         :time 1428366765
                                         :metric 42.08}
@@ -132,7 +157,7 @@
       (is (= {"value" 42.08} (into {} (.get fields point))))))
 
   (testing "Event is converted with time in milliseconds"
-    (let [point (influxdb/event->point {:host "host-01"
+    (let [point (influxdb/event->point-9 {:host "host-01"
                                         :service "test service"
                                         :time 1428366765
                                         :precision :milliseconds
@@ -144,7 +169,7 @@
       (is (= {"value" 42.08} (into {} (.get fields point))))))
 
   (testing "Event is converted with time in microseconds"
-    (let [point (influxdb/event->point {:host "host-01"
+    (let [point (influxdb/event->point-9 {:host "host-01"
                                         :service "test service"
                                         :time 1428366765
                                         :precision :microseconds
@@ -156,7 +181,7 @@
       (is (= {"value" 42.08} (into {} (.get fields point))))))
 
   (testing "Full event is converted to point fields"
-    (let [point (influxdb/event->point {:host "www-dev-app-01.sfo1.example.com"
+    (let [point (influxdb/event->point-9 {:host "www-dev-app-01.sfo1.example.com"
                                         :service "service_api_req_latency"
                                         :time 1428354941
                                         :metric 0.8025
@@ -185,7 +210,7 @@
              (into {} (.get fields point))))))
 
   (testing ":sys and :loc tags and removed because nil or empty str. Same for :bar and :hello fields"
-    (let [point (influxdb/event->point {:host "www-dev-app-01.sfo1.example.com"
+    (let [point (influxdb/event->point-9 {:host "www-dev-app-01.sfo1.example.com"
                                         :service "service_api_req_latency"
                                         :time 1428354941
                                         :metric 0.8025
@@ -214,7 +239,7 @@
              (into {} (.get fields point))))))
 
   (testing "event :tag-fields"
-    (let [point (influxdb/event->point {:host "host-01"
+    (let [point (influxdb/event->point-9 {:host "host-01"
                                         :service "test service"
                                         :time 1428366765
                                         :precision :milliseconds
@@ -227,3 +252,69 @@
       (is (= {"host" "host-01"} (into {} (.get tags point))))
       (is (= {"value" 42.08 "env" "dev"} (into {} (.get fields point)))))))
 
+
+(deftest point-conversion
+  (is (nil? (influxdb/event->point {:service "foo test" :time 1}))
+      "Event with no measurement is converted to nil")
+
+  (testing "Minimal event is converted to point fields"
+    (let [point (influxdb/event->point {:time 1428366765
+                                        :tags {:foo "bar"
+                                               :bar "baz"}
+                                        :measurement "measurement"
+                                        :fields {:alice "bob"}})]
+      (is (= "measurement" (.get measurement point)))
+      (is (= 1428366765 (.get time-field point)))
+      (is (= {"alice" "bob"} (into {} (.get fields point))))))
+
+  (testing "Event is converted with time in milliseconds"
+    (let [point (influxdb/event->point {:time 1428366765
+                                        :tags {:foo "bar"
+                                               :bar "baz"}
+                                        :precision :milliseconds
+                                        :measurement "measurement"
+                                        :fields {:alice "bob"}})]
+      (is (= "measurement" (.get measurement point)))
+      (is (= 1428366765000 (.get time-field point)))
+      (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
+      (is (= {"alice" "bob"} (into {} (.get fields point))))))
+
+  (testing "Event is converted with time in microseconds"
+    (let [point (influxdb/event->point {:time 1428366765
+                                        :tags {:foo "bar"
+                                               :bar "baz"}
+                                        :precision :milliseconds
+                                        :measurement "measurement"
+                                        :fields {:alice "bob"}})]
+      (is (= "measurement" (.get measurement point)))
+      (is (= 1428366765000 (.get time-field point)))
+      (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
+      (is (= {"alice" "bob"} (into {} (.get fields point))))))
+
+  (testing ":sys and :loc tags are removed because nil or empty str. Same for :bar and :hello fields"
+    (let [point (influxdb/event->point {:time 1428366765
+                                        :tags {:foo "bar"
+                                               :bar "baz"
+                                               :sys ""
+                                               :loc nil}
+                                        :precision :milliseconds
+                                        :measurement "measurement"
+                                        :fields {:alice "bob"
+                                                 :bar nil
+                                                 :hello ""}})]
+      (is (= "measurement" (.get measurement point)))
+      (is (= 1428366765000 (.get time-field point)))
+      (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
+      (is (= {"alice" "bob"} (into {} (.get fields point)))))))
+
+
+{:time 1428366765
+ :tags {:foo "bar"
+        :bar "baz"
+        :sys ""
+        :loc nil}
+ :precision :milliseconds
+ :measurement "measurement"
+ :fields {:alice "bob"
+          :bar nil
+          :hello ""}}

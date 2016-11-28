@@ -10,12 +10,17 @@
    (org.influxdb InfluxDBFactory InfluxDB$ConsistencyLevel)
    (org.influxdb.dto BatchPoints Point)))
 
-;; ## Helper Functions
 
+(defn nil-or-empty-str
+  [s]
+  (or (nil? s) (= "" s)))
+
+;; specific influxdb-deprecated code
 (def special-fields
   "A set of event fields in Riemann with special handling logic."
   #{:host :service :time :metric :tags :ttl :precision})
 
+;; specific influxdb-deprecated code
 (defn event-tags
   "Generates a map of InfluxDB tags from a Riemann event. Any fields in the
   event which are named in `tag-fields` will be converted to a string key/value
@@ -26,6 +31,7 @@
        (map #(vector (name (key %)) (str (val %))))
        (into {})))
 
+;; specific influxdb-deprecated code
 (defn event-fields
   "Generates a map of InfluxDB fields from a Riemann event. The event's
   `metric` is converted to the `value` field, and any additional event fields
@@ -85,7 +91,7 @@
   [{:keys [tags db retention consistency]}]
   (let [builder (doto (BatchPoints/database db)
                       (.consistency (InfluxDB$ConsistencyLevel/valueOf consistency)))]
-    (when retention (.retentionPolicy retention))
+    (when retention (.retentionPolicy builder retention))
     (doseq [[k v] tags] (.tag builder (name k) v))
     (.build builder)))
 
@@ -111,7 +117,8 @@
     (= precision :seconds) (long time-event)
     true (long time-event)))
 
-(defn event->point
+;; specific influxdb-deprecated code
+(defn event->point-9
   "Converts a Riemann event into an InfluxDB Point (an instance of `org.influxdb.dto.Point`.
   The first parameter is the event. The `:precision` key of the event is used to converts the event `time` into the correct time unit (default seconds).
   The second parameter is the option map passed to the influxdb stream."
@@ -128,10 +135,30 @@
       (doseq [[k v] fields] (.field builder k v))
       (.build builder))))
 
+(defn event->point
+  "Converts a Riemann event into an InfluxDB Point (an instance of `org.influxdb.dto.Point`.
+  The first parameter is the event.
+  The `:precision` event key is used to converts the event `time` into the correct time unit (default seconds).
+  The `:measurement` event key is the influxdb measurement.
+  The `:tags` event key contains all the Influxdb tags.
+  The `:fields` event key contains all the Influxdb fields.
+  The second parameter is the option map passed to the influxdb stream."
+  [event]
+  (when (and (:time event) (:measurement event))
+    (let [precision (:precision event :seconds) ;; use seconds default
+          builder (doto (Point/measurement (:measurement event))
+                        (.time (convert-time (:time event) precision) (get-time-unit precision)))
+          tags   (:tags event)
+          fields (:fields event)]
+      (doseq [[k v] tags] (when-not (nil-or-empty-str v) (.tag builder (name k) v)))
+      (doseq [[k v] fields] (when-not (nil-or-empty-str v) (.field builder (name k) v)))
+      (.build builder))))
+
 (def default-opts
   "Default influxdb options"
   {:db "riemann"
    :scheme "http"
+   :version :0.9
    :host "localhost"
    :username "root"
    :port 8086
@@ -145,6 +172,64 @@
   [connection batch-point]
   (.write connection batch-point))
 
+(defn get-batchpoints
+  [opts events]
+  (map
+   (fn [events]
+     (when (not-empty events)
+       (let [event (first events)
+             opts (merge opts
+                         (select-keys event [:db :retention :consistency]))
+             batch-point (get-batchpoint opts)
+             _ (doseq [event events] (.point batch-point (event->point event)))]
+         batch-point
+         )))
+   events))
+
+(defn influxdb-new-stream
+  "Returns a function which accepts an event, or sequence of events, and writes
+  them to InfluxDB.
+
+  streams receive an event or a list of events. Each event can have these keys :
+  `measurement`     The influxdb measurement.
+  `tags`            A map of influxdb tags. Exemple : `{:foo \"bar\"}`
+  `fields`          A map of influxdb fields. Exemple : `{:bar \"baz\"}`
+  `precision`       The time precision. Possibles values are `:seconds`, `:milliseconds` and `:microseconds` (default `:seconds`). The event `time` will be converted.
+  `:db`             Name of the database to write to. (optional)
+  `:retention`      Name of retention policy to use. (optional)
+  `:consistency`    The InfluxDB consistency level (default: `\"ONE\"`). Possibles values are ALL, ANY, ONE, QUORUM.
+"
+  [opts]
+  (let [opts (merge default-opts opts)
+        connection (get-client opts)]
+    (fn streams
+      [events]
+      (let [events-partition (->> (if (sequential? events) events (list events))
+                                  (partition-by #(:keys [:db :retention :consistency] %)))
+            batch-points (get-batchpoints opts events-partition)]
+        (doseq [batch-point batch-points] (write-batch-point connection batch-point))
+        batch-points))))
+
+(defn influxdb-deprecated
+  "Returns a function which accepts an event, or sequence of events, and writes
+  them to InfluxDB.
+
+  influxdb-deprecated specifics options :
+  `:tag-fields`     A set of event fields to map into InfluxDB series tags.
+                    (default: `#{:host}`)
+"
+  [opts]
+  (let [opts (merge default-opts opts)
+        connection (get-client opts)]
+    (fn streams
+      [events]
+      (let [events (->> (if (sequential? events) events (list events))
+                        (keep #(event->point-9 % opts)))
+            batch-point (get-batchpoint opts)
+            _ (doseq [event events] (.point batch-point event))]
+        (write-batch-point connection batch-point)
+        batch-point))))
+
 (defn influxdb
   "Returns a function which accepts an event, or sequence of events, and writes
   them to InfluxDB as a batch of measurement points. For performance, you should
@@ -156,26 +241,23 @@
              :password \"secret\"})
   General Options:
   `:db`             Name of the database to write to. (default: `\"riemann\"`)
+  `:version`        Version of InfluxDB client to use. (default: `\":0.9\"`)
   `:scheme`         URL scheme for endpoint. (default: `\"http\"`)
   `:host`           Hostname to write points to. (default: `\"localhost\"`)
   `:port`           API port number. (default: `8086`)
   `:username`       Database user to authenticate as. (default: `\"root\"`)
   `:password`       Password to authenticate with. (optional)
   `:tags`           A common map of tags to apply to all points. (optional)
-  `:tag-fields`     A set of event fields to map into InfluxDB series tags.
-                    (default: `#{:host}`)
   `:retention`      Name of retention policy to use. (optional)
   `:timeout`        HTTP timeout in milliseconds. (default: `5000`)
   `:consistency`    The InfluxDB consistency level (default: `\"ONE\"`). Possibles values are ALL, ANY, ONE, QUORUM.
-  `:insecure`       If scheme is https and certficate is self-signed. (optional)"
+  `:insecure`       If scheme is https and certficate is self-signed. (optional)
+
+  See `influxdb-deprecated` and `influxdb-low-level` for version-specific options.
+"
   [opts]
-  (let [opts (merge default-opts opts)
-        connection (get-client opts)]
-    (fn streams
-      [events]
-      (let [events (->> (if (sequential? events) events (list events))
-                        (keep #(event->point % opts)))
-            batch-point (get-batchpoint opts)
-            _ (doseq [event events] (.point batch-point event))]
-        (write-batch-point connection batch-point)
-        batch-point))))
+  (let [opts (merge default-opts opts)]
+    (if (= :new-stream (:version opts))
+      (influxdb-new-stream opts)
+      (influxdb-deprecated opts)
+      )))
