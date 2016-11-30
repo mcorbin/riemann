@@ -10,7 +10,6 @@
    (org.influxdb InfluxDBFactory InfluxDB$ConsistencyLevel)
    (org.influxdb.dto BatchPoints Point)))
 
-
 (defn nil-or-empty-str
   [s]
   (or (nil? s) (= "" s)))
@@ -18,7 +17,7 @@
 ;; specific influxdb-deprecated code
 (def special-fields
   "A set of event fields in Riemann with special handling logic."
-  #{:host :service :time :metric :tags :ttl :precision})
+  #{:host :service :time :metric :tags :ttl :precision :tag-fields})
 
 ;; specific influxdb-deprecated code
 (defn event-tags
@@ -27,7 +26,7 @@
   entry in the tag map."
   [tag-fields event]
   (->> (select-keys event tag-fields)
-       (remove (fn [[k v]] (or (nil? v) (= "" v))))
+       (remove (fn [[k v]] (nil-or-empty-str v)))
        (map #(vector (name (key %)) (str (val %))))
        (into {})))
 
@@ -41,12 +40,14 @@
   (let [ignored-fields (set/union special-fields tag-fields)]
     (-> event
         (->> (remove (comp ignored-fields key))
-             (remove (fn [[k v]] (or (nil? v) (= "" v))))
+             (remove (fn [[k v]] (nil-or-empty-str v)))
              (map #(vector (name (key %)) (val %)))
              (into {}))
         (assoc "value" (:metric event)))))
 
 (defn get-trust-manager
+  "Returns an array with an instance of `X509TrustManager`
+  Used for trust all certs in the influxdb `insecure` mode."
   []
   (let [trust-manager (proxy [X509TrustManager] []
                         (checkServerTrusted [_ _])
@@ -69,7 +70,7 @@
     verifier))
 
 (defn get-builder
-  "Returns new okhttp3.OkHttpClient$Builder"
+  "Returns a new okhttp3.OkHttpClient$Builder"
   [{:keys [timeout insecure]}]
   (let [builder (new okhttp3.OkHttpClient$Builder)]
     (when insecure
@@ -124,12 +125,11 @@
   The second parameter is the option map passed to the influxdb stream."
   [event opts]
   (when (and (:time event) (:service event) (:metric event))
-    (let [precision (:precision event :seconds) ;; use seconds default
+    (let [precision (:precision event (:precision opts))
           builder (doto (Point/measurement (:service event))
                         (.time (convert-time (:time event) precision) (get-time-unit precision)))
           tag-fields (set/union (:tag-fields opts) (:tag-fields event))
           tags   (event-tags (:tag-fields opts) event)
-          event  (dissoc event :tag-fields) ;; remove :tag-fields from event
           fields (event-fields (:tag-fields opts) event)]
       (doseq [[k v] tags] (.tag builder k v))
       (doseq [[k v] fields] (.field builder k v))
@@ -143,9 +143,9 @@
   The `:tags` event key contains all the Influxdb tags.
   The `:fields` event key contains all the Influxdb fields.
   The second parameter is the option map passed to the influxdb stream."
-  [event]
+  [event opts]
   (when (and (:time event) (:measurement event))
-    (let [precision (:precision event :seconds) ;; use seconds default
+    (let [precision (:precision event (:precision opts)) ;; use seconds default
           builder (doto (Point/measurement (:measurement event))
                         (.time (convert-time (:time event) precision) (get-time-unit precision)))
           tags   (:tags event)
@@ -161,51 +161,65 @@
    :version :0.9
    :host "localhost"
    :username "root"
+   :precision :seconds
    :port 8086
    :tags {}
-   :tag-fields #{}
+   :tag-fields #{:host}
    :consistency "ONE"
    :timeout 5000
    :insecure false})
 
 (defn write-batch-point
+  "Write to influxdb the `batch-point` using the `connection`"
   [connection batch-point]
   (.write connection batch-point))
 
 (defn get-batchpoints
+  "Create a `org.influxdb.dto.BatchPoints` for each element in the `event` list.
+  `event` is a list where each element is a list of events.
+  Each element contains events with the same `:db`, `:retention` and `:consistency` keys.
+  These options are used to create the BatchPoints.
+  `opts` are the global influxdb stream options."
   [opts events]
   (map
    (fn [events]
      (when (not-empty events)
        (let [event (first events)
-             opts (merge opts
+             opts (merge opts ;; we can have per event :db :retention :consistency
                          (select-keys event [:db :retention :consistency]))
              batch-point (get-batchpoint opts)
-             _ (doseq [event events] (.point batch-point (event->point event)))]
-         batch-point
-         )))
+             _ (doseq [event events] (.point batch-point (event->point event opts)))]
+         batch-point)))
    events))
+
+
+(defn partition-events
+  "`events` is a list of events
+  partition `events` depending of the `db`, `retention` and `consistency` keys
+  returns a list, each element being a list of events (the result of the partitioning)."
+  [events]
+  (->> (if (sequential? events) events (list events))
+       (group-by #(select-keys % [:db :retention :consistency]))
+       (vals)))
 
 (defn influxdb-new-stream
   "Returns a function which accepts an event, or sequence of events, and writes
   them to InfluxDB.
 
   streams receive an event or a list of events. Each event can have these keys :
-  `measurement`     The influxdb measurement.
-  `tags`            A map of influxdb tags. Exemple : `{:foo \"bar\"}`
-  `fields`          A map of influxdb fields. Exemple : `{:bar \"baz\"}`
-  `precision`       The time precision. Possibles values are `:seconds`, `:milliseconds` and `:microseconds` (default `:seconds`). The event `time` will be converted.
-  `:db`             Name of the database to write to. (optional)
-  `:retention`      Name of retention policy to use. (optional)
-  `:consistency`    The InfluxDB consistency level (default: `\"ONE\"`). Possibles values are ALL, ANY, ONE, QUORUM.
-"
+  `:measurement`     The influxdb measurement.
+  `:tags`            A map of influxdb tags. Exemple : `{:foo \"bar\"}`
+  `:fields`          A map of influxdb fields. Exemple : `{:bar \"baz\"}`
+  `:precision`       The time precision. Possibles values are `:seconds`, `:milliseconds` and `:microseconds` (default `:seconds`). The event `time` will be converted.
+  `:db`              Name of the database to write to. (optional)
+  `:retention`       Name of retention policy to use. (optional)
+  `:consistency`     The InfluxDB consistency level (default: `\"ONE\"`). Possibles values are ALL, ANY, ONE, QUORUM."
   [opts]
   (let [opts (merge default-opts opts)
         connection (get-client opts)]
     (fn streams
       [events]
-      (let [events-partition (->> (if (sequential? events) events (list events))
-                                  (partition-by #(:keys [:db :retention :consistency] %)))
+      (let [events-partition (partition-events events)
             batch-points (get-batchpoints opts events-partition)]
         (doseq [batch-point batch-points] (write-batch-point connection batch-point))
         batch-points))))
@@ -216,8 +230,11 @@
 
   influxdb-deprecated specifics options :
   `:tag-fields`     A set of event fields to map into InfluxDB series tags.
-                    (default: `#{:host}`)
-"
+                    (default: `#{:host}`).
+
+  Each event can have these keys :
+  `:tag-fields`     A set of event fields to map into InfluxDB series tags..
+  `:precision`       The time precision. Possibles values are `:seconds`, `:milliseconds` and `:microseconds` (default `:seconds`). The event `time` will be converted."
   [opts]
   (let [opts (merge default-opts opts)
         connection (get-client opts)]
@@ -252,12 +269,11 @@
   `:timeout`        HTTP timeout in milliseconds. (default: `5000`)
   `:consistency`    The InfluxDB consistency level (default: `\"ONE\"`). Possibles values are ALL, ANY, ONE, QUORUM.
   `:insecure`       If scheme is https and certficate is self-signed. (optional)
+  `:precision`      The time precision. Possibles values are `:seconds`, `:milliseconds` and `:microseconds` (default `:seconds`). The event `time` will be converted.
 
-  See `influxdb-deprecated` and `influxdb-low-level` for version-specific options.
-"
+  See `influxdb-deprecated` and `influxdb-low-level` for version-specific options."
   [opts]
   (let [opts (merge default-opts opts)]
     (if (= :new-stream (:version opts))
       (influxdb-new-stream opts)
-      (influxdb-deprecated opts)
-      )))
+      (influxdb-deprecated opts))))

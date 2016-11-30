@@ -24,6 +24,7 @@
 (def time-field (get-field Point "time"))
 (def tags (get-field Point "tags"))
 (def fields (get-field Point "fields"))
+(def precision (get-field Point "precision"))
 
 ; Would the next person working on influxdb kindly update these tests to use
 ; riemann.test-utils/with-mock? Would be nice to have something besides just
@@ -49,6 +50,12 @@
           :state "ok"
           :description "Missing service, not transmitted"
           :metric 4
+          :time (unix-time)})
+      (k {:host "riemann=local"
+          :service "influx "
+          :state "ok"
+          :description "all clear, uh, situation normal"
+          :metric -2
           :time (unix-time)})))
 
   (testing "new influxdb stream"
@@ -71,9 +78,7 @@
           :consistency "ALL"
           :retention "autogen"
           :measurement "measurement"
-          :fields {:alice "bob"}})
-      ))
-  )
+          :fields {:alice "bob"}}))))
 
 (deftest event-fields
   (is (= (influxdb/event-fields
@@ -144,13 +149,13 @@
 (deftest point-conversion-deprecated
   (is (nil? (influxdb/event->point-9 {:service "foo test" :time 1} {:tag-fields #{}}))
       "Event with no metric is converted to nil")
-
   (testing "Minimal event is converted to point fields"
     (let [point (influxdb/event->point-9 {:host "host-01"
-                                        :service "test service"
-                                        :time 1428366765
-                                        :metric 42.08}
-                                       {:tag-fields #{:host}})]
+                                          :service "test service"
+                                          :time 1428366765
+                                          :metric 42.08}
+                                         {:tag-fields #{:host}
+                                          :precision :seconds})]
       (is (= "test service" (.get measurement point)))
       (is (= 1428366765 (.get time-field point)))
       (is (= {"host" "host-01"} (into {} (.get tags point))))
@@ -158,11 +163,12 @@
 
   (testing "Event is converted with time in milliseconds"
     (let [point (influxdb/event->point-9 {:host "host-01"
-                                        :service "test service"
-                                        :time 1428366765
-                                        :precision :milliseconds
-                                        :metric 42.08}
-                                       {:tag-fields #{:host}})]
+                                          :service "test service"
+                                          :time 1428366765
+                                          :precision :milliseconds
+                                          :metric 42.08}
+                                         {:tag-fields #{:host}
+                                          :precision :seconds})]
       (is (= "test service" (.get measurement point)))
       (is (= 1428366765000 (.get time-field point)))
       (is (= {"host" "host-01"} (into {} (.get tags point))))
@@ -170,11 +176,24 @@
 
   (testing "Event is converted with time in microseconds"
     (let [point (influxdb/event->point-9 {:host "host-01"
-                                        :service "test service"
-                                        :time 1428366765
-                                        :precision :microseconds
-                                        :metric 42.08}
-                                       {:tag-fields #{:host}})]
+                                          :service "test service"
+                                          :time 1428366765
+                                          :metric 42.08}
+                                         {:tag-fields #{:host}
+                                          :precision :microseconds})]
+      (is (= "test service" (.get measurement point)))
+      (is (= 1428366765000000 (.get time-field point)))
+      (is (= {"host" "host-01"} (into {} (.get tags point))))
+      (is (= {"value" 42.08} (into {} (.get fields point))))))
+
+  (testing "Event is converted with time in microseconds"
+    (let [point (influxdb/event->point-9 {:host "host-01"
+                                          :service "test service"
+                                          :time 1428366765
+                                          :precision :microseconds
+                                          :metric 42.08}
+                                         {:tag-fields #{:host}
+                                          :precision :seconds})]
       (is (= "test service" (.get measurement point)))
       (is (= 1428366765000000 (.get time-field point)))
       (is (= {"host" "host-01"} (into {} (.get tags point))))
@@ -182,21 +201,23 @@
 
   (testing "Full event is converted to point fields"
     (let [point (influxdb/event->point-9 {:host "www-dev-app-01.sfo1.example.com"
-                                        :service "service_api_req_latency"
-                                        :time 1428354941
-                                        :metric 0.8025
-                                        :state "ok"
-                                        :description "A text description!"
-                                        :ttl 60
-                                        :tags ["one" "two" "red"]
-                                        :sys "www"
-                                        :env "dev"
-                                        :role "app"
-                                        :loc "sfo1"
-                                        :foo "frobble"}
-                                       {:tag-fields #{:host :sys :env :role :loc}})]
+                                          :service "service_api_req_latency"
+                                          :time 1428354941
+                                          :metric 0.8025
+                                          :state "ok"
+                                          :description "A text description!"
+                                          :ttl 60
+                                          :tags ["one" "two" "red"]
+                                          :sys "www"
+                                          :env "dev"
+                                          :role "app"
+                                          :loc "sfo1"
+                                          :foo "frobble"}
+                                         {:tag-fields #{:host :sys :env :role :loc}
+                                          :precision :milliseconds})]
       (is (= "service_api_req_latency" (.get measurement point)))
-      (is (= 1428354941 (.get time-field point)))
+      (is (= 1428354941000 (.get time-field point)))
+      (is (= TimeUnit/MILLISECONDS (.get precision point)))
       (is (= {"host" "www-dev-app-01.sfo1.example.com"
               "sys" "www"
               "env" "dev"
@@ -228,6 +249,7 @@
                                        {:tag-fields #{:host :sys :env :role :loc}})]
       (is (= "service_api_req_latency" (.get measurement point)))
       (is (= 1428354941 (.get time-field point)))
+      (is (= TimeUnit/SECONDS (.get precision point)))
       (is (= {"host" "www-dev-app-01.sfo1.example.com"
               "role" "app"
               "env" "dev"}
@@ -252,9 +274,8 @@
       (is (= {"host" "host-01"} (into {} (.get tags point))))
       (is (= {"value" 42.08 "env" "dev"} (into {} (.get fields point)))))))
 
-
 (deftest point-conversion
-  (is (nil? (influxdb/event->point {:service "foo test" :time 1}))
+  (is (nil? (influxdb/event->point {:service "foo test" :time 1} {:precision :seconds}))
       "Event with no measurement is converted to nil")
 
   (testing "Minimal event is converted to point fields"
@@ -262,8 +283,10 @@
                                         :tags {:foo "bar"
                                                :bar "baz"}
                                         :measurement "measurement"
-                                        :fields {:alice "bob"}})]
+                                        :fields {:alice "bob"}}
+                                       {:precision :seconds})]
       (is (= "measurement" (.get measurement point)))
+      (is (= TimeUnit/SECONDS (.get precision point)))
       (is (= 1428366765 (.get time-field point)))
       (is (= {"alice" "bob"} (into {} (.get fields point))))))
 
@@ -273,9 +296,11 @@
                                                :bar "baz"}
                                         :precision :milliseconds
                                         :measurement "measurement"
-                                        :fields {:alice "bob"}})]
+                                        :fields {:alice "bob"}}
+                                       {:precision :seconds})]
       (is (= "measurement" (.get measurement point)))
       (is (= 1428366765000 (.get time-field point)))
+      (is (= TimeUnit/MILLISECONDS (.get precision point)))
       (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
       (is (= {"alice" "bob"} (into {} (.get fields point))))))
 
@@ -283,11 +308,26 @@
     (let [point (influxdb/event->point {:time 1428366765
                                         :tags {:foo "bar"
                                                :bar "baz"}
-                                        :precision :milliseconds
+                                        :precision :microseconds
                                         :measurement "measurement"
-                                        :fields {:alice "bob"}})]
+                                        :fields {:alice "bob"}}
+                                       {:precision :seconds})]
       (is (= "measurement" (.get measurement point)))
-      (is (= 1428366765000 (.get time-field point)))
+      (is (= 1428366765000000 (.get time-field point)))
+      (is (= TimeUnit/MICROSECONDS (.get precision point)))
+      (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
+      (is (= {"alice" "bob"} (into {} (.get fields point))))))
+
+(testing "Event is converted with time in microseconds"
+    (let [point (influxdb/event->point {:time 1428366765
+                                        :tags {:foo "bar"
+                                               :bar "baz"}
+                                        :measurement "measurement"
+                                        :fields {:alice "bob"}}
+                                       {:precision :microseconds})]
+      (is (= "measurement" (.get measurement point)))
+      (is (= 1428366765000000 (.get time-field point)))
+      (is (= TimeUnit/MICROSECONDS (.get precision point)))
       (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
       (is (= {"alice" "bob"} (into {} (.get fields point))))))
 
@@ -301,20 +341,150 @@
                                         :measurement "measurement"
                                         :fields {:alice "bob"
                                                  :bar nil
-                                                 :hello ""}})]
+                                                 :hello ""}}
+                                       {:precision :seconds})]
       (is (= "measurement" (.get measurement point)))
       (is (= 1428366765000 (.get time-field point)))
+      (is (= TimeUnit/MILLISECONDS (.get precision point)))
       (is (= {"foo" "bar" "bar" "baz"} (into {} (.get tags point))))
       (is (= {"alice" "bob"} (into {} (.get fields point)))))))
 
+(deftest get-batchpoint-test
+  (testing "No tags, no retention"
+    (let [batch-point (influxdb/get-batchpoint {:tags {}
+                                                :db "riemann_test"
+                                                :retention nil
+                                                :consistency "ALL"})]
+      (is (= (.getDatabase batch-point) "riemann_test"))
+      (is (= (.getRetentionPolicy batch-point) nil))
+      (is (= (.getConsistency batch-point) InfluxDB$ConsistencyLevel/ALL))
+      (is (= (into {} (.getTags batch-point)) {}))))
+  (testing "With tags, no retention"
+    (let [batch-point (influxdb/get-batchpoint {:tags {:foo "bar"
+                                                       :bar "baz"}
+                                                :db "riemann_test"
+                                                :retention nil
+                                                :consistency "ONE"})]
+      (is (= (.getDatabase batch-point) "riemann_test"))
+      (is (= (.getRetentionPolicy batch-point) nil))
+      (is (= (.getConsistency batch-point) InfluxDB$ConsistencyLevel/ONE))
+      (is (= (into {} (.getTags batch-point)) {"foo" "bar" "bar" "baz"}))))
+  (testing "With tags, with retention"
+    (let [batch-point (influxdb/get-batchpoint {:tags {:foo "bar"
+                                                       :bar "baz"}
+                                                :db "riemann_test"
+                                                :retention "hello"
+                                                :consistency "ONE"})]
+      (is (= (.getDatabase batch-point) "riemann_test"))
+      (is (= (.getRetentionPolicy batch-point) "hello"))
+      (is (= (.getConsistency batch-point) InfluxDB$ConsistencyLevel/ONE))
+      (is (= (into {} (.getTags batch-point)) {"foo" "bar" "bar" "baz"})))))
 
-{:time 1428366765
- :tags {:foo "bar"
-        :bar "baz"
-        :sys ""
-        :loc nil}
- :precision :milliseconds
- :measurement "measurement"
- :fields {:alice "bob"
-          :bar nil
-          :hello ""}}
+(deftest get-batchpoints-test
+  (testing "partition by db"
+    (let [partition [[{:time 1428366765
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db1"
+                       :fields {:alice "bob"}}
+                      {:time 1428366768
+                       :tags {:foo "bar"}
+                       :db "db1"
+                       :measurement "measurement"
+                       :fields {:alice "bob"}}]
+                     [{:time 1428366766
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db2"
+                       :fields {:alice "bob"}}
+                      {:time 1428366767
+                       :tags {:foo "bar"}
+                       :db "db2"
+                       :measurement "measurement"
+                       :fields {:alice "bob"}}]]
+          [b1 b2 :as batch-points] (influxdb/get-batchpoints {:consistency "ALL"} partition)]
+      (is (= (count batch-points) 2))
+      (is (= (.getDatabase b1) "db1"))
+      (is (= (.getRetentionPolicy b1) nil))
+      (is (= (.getConsistency b1) InfluxDB$ConsistencyLevel/ALL))
+      (is (= (into {} (.getTags b1)) {}))
+      (is (= (.getDatabase b2) "db2"))
+      (is (= (.getRetentionPolicy b2) nil))
+      (is (= (.getConsistency b2) InfluxDB$ConsistencyLevel/ALL))
+      (is (= (into {} (.getTags b2)) {}))))
+  (testing "partition by db, consistency, retention"
+    (let [partition [[{:time 1428366765
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db1"
+                       :consistency "ALL"
+                       :fields {:alice "bob"}}
+                      {:time 1428366768
+                       :tags {:foo "bar"}
+                       :db "db1"
+                       :consistency "ALL"
+                       :measurement "measurement"
+                       :fields {:alice "bob"}}]
+                     [{:time 1428366765
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db1"
+                       :fields {:alice "bob"}}]
+                     [{:time 1428366766
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db2"
+                       :fields {:alice "bob"}}
+                      {:time 1428366767
+                       :tags {:foo "bar"}
+                       :db "db2"
+                       :measurement "measurement"
+                       :fields {:alice "bob"}}]
+                     [{:time 1428366766
+                       :tags {:foo "bar"}
+                       :measurement "measurement"
+                       :db "db2"
+                       :retention "hello"
+                       :fields {:alice "bob"}}]]
+          [b1 b2 b3 b4 :as batch-points] (influxdb/get-batchpoints {:consistency "ONE"} partition)]
+      (is (= (count batch-points) 4))
+      (is (= (.getDatabase b1) "db1"))
+      (is (= (.getRetentionPolicy b1) nil))
+      (is (= (.getConsistency b1) InfluxDB$ConsistencyLevel/ALL))
+      (is (= (into {} (.getTags b1)) {}))
+      (is (= (.getDatabase b2) "db1"))
+      (is (= (.getRetentionPolicy b2) nil))
+      (is (= (.getConsistency b2) InfluxDB$ConsistencyLevel/ONE))
+      (is (= (into {} (.getTags b2)) {}))
+      (is (= (.getDatabase b3) "db2"))
+      (is (= (.getRetentionPolicy b3) nil))
+      (is (= (.getConsistency b3) InfluxDB$ConsistencyLevel/ONE))
+      (is (= (into {} (.getTags b3)) {}))
+      (is (= (.getDatabase b4) "db2"))
+      (is (= (.getRetentionPolicy b4) "hello"))
+      (is (= (.getConsistency b4) InfluxDB$ConsistencyLevel/ONE))
+      (is (= (into {} (.getTags b4)) {})))))
+
+(deftest partition-events-test
+  (let [[p1 p2 p3 p4 :as result] (influxdb/partition-events [{:db "db1"
+                                                              :consistency "ALL"}
+                                                             {:db "db1"}
+                                                             {:db "db2"}
+                                                             {:db "db2"}
+                                                             {:db "db1"
+                                                              :consistency "ALL"
+                                                              :foo "bar"}
+                                                             {:measurement "measurement"
+                                                              :db "db2"
+                                                              :retention "hello"}])]
+    (is (= (count result) 4))
+    (is (= (count p1) 2))
+    (is (= (first p1) {:db "db1" :consistency "ALL"}))
+    (is (= (second p1) {:db "db1" :consistency "ALL" :foo "bar"}))
+    (is (= (count p2) 1))
+    (is (= (first p2) {:db "db1"}))
+    (is (= (first p3) {:db "db2"}))
+    (is (= (second p3) {:db "db2"}))
+    (is (= (count p3) 2))
+    (is (= (first p4) {:db "db2" :measurement "measurement" :retention "hello"}))
+    (is (= (count p4) 1))))
