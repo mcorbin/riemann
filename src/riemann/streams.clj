@@ -1573,6 +1573,64 @@
                     ((swap! table assoc fork-name (new-fork fork-name)) fork-name))]
          (call-rescue event fork)))))
 
+(defn remove-old-windows
+  "Receives the `by-time-fn` state and update it.
+  Updates the state `:last-window` key and all windows in `:windows` except the `n` last."
+  [state n]
+  (let [;; update the :last-window key.
+        ;; if :window is an empty map, just returns the current :last-window value
+        s (assoc state :last-window (if (= (:windows state) {})
+                                      (:last-window state)
+                                      (apply max (keys (:windows state)))))]
+    (assoc s :windows
+           (->> (:windows s)
+                ;; remove old windows
+                (filter #(> (first %) (- (:last-window s) n)))
+                (into {})))))
+
+
+(defn by-time-fn [n dt new-fork]
+  "Used by the `by-time` macro."
+  (let [table (atom {:last-window 0
+                     :windows {}})]
+    (fn stream [event]
+      (when (:time event)
+        (let [time-window (long (quot (:time event) dt))
+              state @table
+              ;; test if the event is too old
+              too-old? (<= time-window (- (:last-window state) n))
+              fork (when-not too-old?
+                     (if-let [fork (get-in state [:windows time-window])]
+                       fork
+                       (get-in
+                        (swap! table assoc-in [:windows time-window] (new-fork time-window))
+                        [:windows time-window])))]
+          (when-not too-old?
+            (info @table)
+            (swap! table #(remove-old-windows % n))
+            (call-rescue event fork)))))))
+
+(defmacro by-time
+  "Splits stream by time window.
+  Every time an event arrives in a new time window, this macro invokes
+  its child forms to return a *new*, distinct set of streams for that
+  particular time window.
+
+  Uses the maximum event time to calculate the newest time window.
+
+  The `dt` parameter is the time window duration.
+  The `n` parameter indicates that windows older than (- last-window n) will be closed.
+
+  (byt-time 10 5 prn) split events by 10 seconds time window, and keep the 5 newest time window open. When a new time window begins, the oldest one is closed.
+
+  Drop events with no `time`"
+  [dt n & children]
+  ; new-fork is a function which gives us a new copy of our children.
+  ; table is a reference which maps (field event) to a fork (or list of
+  ; children).
+  `(let [new-fork# (fn [_#] [~@children])]
+     (by-time-fn ~n ~dt new-fork#)))
+
 (defn changed
   "Passes on events only when (f event) differs from that of the previous
   event. Options:

@@ -749,6 +749,69 @@
            (s {:metric 1})
            (is (= @i 2))))
 
+(deftest remove-old-windows-test
+  (testing "empty state"
+    (let [state {:last-window 0 :windows {}}]
+      (is (= (remove-old-windows state 3) state))))
+
+  (testing "keep all windows"
+    (let [state {:last-window 2
+                 :windows {0 "foo"
+                           1 "foo"
+                           2 "foo"}}]
+      (is (= (remove-old-windows state 3) state))))
+
+  (testing "update :last-window"
+    (let [state {:last-window 0
+                 :windows {0 "foo"
+                           1 "foo"
+                           2 "foo"}}]
+      (is (= (remove-old-windows state 3) (assoc state :last-window 2)))))
+
+  (testing "remove old windows"
+    (let [state {:last-window 3
+                 :windows {0 "foo"
+                           1 "foo"
+                           2 "foo"
+                           3 "foo"
+                           4 "foo"}}]
+      (is (= (remove-old-windows state 3)  (-> (assoc state :last-window 4)
+                                               (update :windows dissoc 0)
+                                               (update :windows dissoc 1)))))))
+
+(deftest by-time-test
+  (let [out (atom {})
+        dt 10
+        ;; 10 seconds time window and keep 5 olds window
+        s (by-time dt 3
+                   (fn [event]
+                     (let [window (long (quot (:time event) dt))]
+                       (if (get @out window)
+                         (swap! out update window conj event)
+                         (swap! out assoc window [event])))))]
+
+    (reset! out {})
+    (testing "Windows expiration"
+      (s {:host "foo" :time 21})
+      (s {:host "foo" :time 31})
+      (s {:host "foo" :time 41})
+      (s {:host "bar" :time 1}) ;; too old
+      (s {:host "foo" :time 11})
+      (is (= @out {2 [{:host "foo" :time 21}]
+                   3 [{:host "foo" :time 31}]
+                   4 [{:host "foo" :time 41}]})))
+
+    (reset! out {})
+    (testing "events with no time"
+      (s {:host "foo"})
+      (s {:host "foo" :time 21})
+      (s {:host "foo" :time 31})
+      (s {:host "foo" :time 41})
+      (s {:host "foo"})
+      (is (= @out {2 [{:host "foo" :time 21}]
+                   3 [{:host "foo" :time 31}]
+                   4 [{:host "foo" :time 41}]})))))
+
 (deftest pipe-test
   (testing "One stage"
     (test-stream
