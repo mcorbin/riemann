@@ -82,6 +82,21 @@
       (get (re-find #"^(\d+).*" name) 1)
       (catch Exception e name))))
 
+(defn test-fixture
+  "Establishes a fresh time context and a fresh
+  set of tap results for the duration of the body"
+  [f]
+  (test/with-test-env
+    (riemann.config/validate-config @config-file)
+    (riemann.time/reset-tasks!)
+    (riemann.config/clear!)
+    (riemann.config/include @config-file)
+    (binding [test/*streams* (:streams @config/next-core)
+              test/*results* (test/fresh-results @test/*taps*)]
+      (riemann.time.controlled/with-controlled-time!
+        (riemann.time.controlled/reset-time!)
+        (f)))))
+
 (defn -main
   "Start Riemann. Loads a configuration file from the first of its args."
   ([]
@@ -106,13 +121,12 @@
               (test/with-test-env
                 (set-config-file! config)
                 (riemann.config/include @config-file)
-                (binding [test/*streams* (:streams @config/next-core)]
-                  (let [test-name-pattern (if test-name (re-pattern test-name) #".*-test")
-                        results (clojure.test/run-all-tests test-name-pattern)]
-                    (if (and (zero? (:error results))
-                             (zero? (:fail results)))
-                      (System/exit 0)
-                      (System/exit 1))))))
+                (let [test-name-pattern (if test-name (re-pattern test-name) #".*-test")
+                      results (clojure.test/run-all-tests test-name-pattern)]
+                  (if (and (zero? (:error results))
+                           (zero? (:fail results)))
+                    (System/exit 0)
+                    (System/exit 1)))))
 
      "version" (try
                  (println (version))

@@ -163,21 +163,6 @@
                    (= service (:service %))) %)
            events))))
 
-(defmacro deftest
-  "Like clojure.test deftest, but establishes a fresh time context and a fresh
-  set of tap results for the duration of the body.
-
-  (deftest my-tap
-    (let [rs (test/inject! [{:time 2 :service \"bar\"}])]
-      (is (= 1 (count (:some-tap rs))))))"
-  [name & body]
-  `(test/deftest ~name
-     (binding [*results* (fresh-results @*taps*)]
-       (time.controlled/with-controlled-time!
-         (time.controlled/reset-time!)
-
-         ~@body))))
-
 (defmacro tests
   "Declares a new namespace named [ns]-test, requires some clojure.test and
   riemann.test helpers, and evaluates body in the context of that namespace.
@@ -186,10 +171,11 @@
   (let [old-ns (ns-name *ns*)
         new-ns (symbol (str old-ns "-test"))]
     `(do (ns ~new-ns
-           ~'(:require [riemann.test :refer [deftest inject! io tap run-stream lookup]]
+           ~'(:require [riemann.test :refer [inject! io tap run-stream lookup]]
                        [riemann.streams :refer :all]
                        [riemann.folds :as folds]
-                       [clojure.test :refer [is are]]))
+                       [clojure.test :refer [is are deftest use-fixtures]]))
+         ~'(use-fixtures :once riemann.bin/test-fixture)
          ~@body
          (ns ~old-ns))))
 
@@ -199,7 +185,7 @@
   `(let [out# (atom [])
          stream# (~@stream (streams/append out#))]
      (time.controlled/reset-time!)
-     (doseq [e# ~inputs] 
+     (doseq [e# ~inputs]
        (when-let [t# (:time e#)]
          (time.controlled/advance! t#))
        (stream# e#))
