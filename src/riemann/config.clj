@@ -44,6 +44,7 @@
                      [elasticsearch :refer [elasticsearch
                                             default-bulk-formatter
                                             elasticsearch-bulk]]
+                     [reaper      :as reaper]
                      [streams     :refer :all]
                      [telegram    :refer [telegram]]
                      [test        :as test :refer [tap io tests]]
@@ -249,11 +250,13 @@
    (fn delete [event] (core/delete-from-index @core fields event))))
 
 (defn periodically-expire
-  "Sets up a reaper for this core. See riemann.core/reaper."
+  "Sets up a reaper for this core. See riemann.reaper/reaper."
   ([]
    (periodically-expire 10))
   ([& args]
-   (service! (apply core/reaper args))))
+   (if test/*testing*
+     (swap! test/test-config (fn [state] (assoc state :periodically-expire args)))
+     (reaper/reaper args core))))
 
 (defn reinject
   "A stream which applies any events it receives back into the current core.

@@ -7,7 +7,9 @@
   received."
   (:require [riemann.time.controlled :as time.controlled]
             [riemann.time :as time]
+            [riemann.index :as index]
             [riemann.streams :as streams]
+            [riemann.reaper :as reaper]
             [clojure.test :as test]))
 
 ; ugggggggh state is the worst
@@ -24,11 +26,13 @@
   "An atom to a map of tap names to information about the taps; e.g. file and
   line number, for preventing collisions." nil)
 
-(def ^:dynamic *streams*
-  "The current sequence of streams. This is global so test writers can simply
-  call (inject! events) without looking up the streams from their core every
-  time."
+(def ^:dynamic *test-core*
+  "The core used in test mode"
   nil)
+
+(def test-config
+  "A map containing the test configuration"
+  (atom {}))
 
 (defn tap-stream
   "Called by `tap` to construct a stream which records events in *results*
@@ -128,13 +132,16 @@
   riemann.time.controlled is global. Streams may be omitted, in which case
   inject! applies events to the *streams* dynamic var."
   ([events]
-   (inject! *streams* events))
+   (inject! (:streams *test-core*) events))
   ([streams events]
    (binding [*results* (fresh-results @*taps*)]
      ; Set up time
      (time.controlled/with-controlled-time!
        (time.controlled/reset-time!)
 
+       ;; start a reaper if necessary
+       (if-let [reaper-config (:periodically-expire @test-config)]
+         (reaper/reaper reaper-config (atom *test-core*)))
        ;; Apply events
        (doseq [e events]
          (when-let [t (:time e)]
@@ -173,6 +180,8 @@
   [name & body]
   `(test/deftest ~name
      (binding [*results* (fresh-results @*taps*)]
+       (if (:index *test-core*)
+         (index/clear (:index *test-core*)))
        (time.controlled/with-controlled-time!
          (time.controlled/reset-time!)
 
@@ -201,7 +210,7 @@
   `(let [out# (atom [])
          stream# (~@stream (streams/append out#))]
      (time.controlled/reset-time!)
-     (doseq [e# ~inputs] 
+     (doseq [e# ~inputs]
        (when-let [t# (:time e#)]
          (time.controlled/advance! t#))
        (stream# e#))
