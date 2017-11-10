@@ -44,7 +44,6 @@
                      [elasticsearch :refer [elasticsearch
                                             default-bulk-formatter
                                             elasticsearch-bulk]]
-                     [reaper      :as reaper]
                      [streams     :refer :all]
                      [telegram    :refer [telegram]]
                      [test        :as test :refer [tap io tests]]
@@ -254,9 +253,7 @@
   ([]
    (periodically-expire 10))
   ([& args]
-   (if test/*testing*
-     (swap! test/test-config (fn [state] (assoc state :periodically-expire args)))
-     (reaper/reaper args core))))
+   (service! (apply core/reaper args))))
 
 (defn reinject
   "A stream which applies any events it receives back into the current core.

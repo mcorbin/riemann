@@ -9,7 +9,6 @@
             [riemann.time :as time]
             [riemann.index :as index]
             [riemann.streams :as streams]
-            [riemann.reaper :as reaper]
             [clojure.test :as test]))
 
 ; ugggggggh state is the worst
@@ -29,10 +28,6 @@
 (def ^:dynamic *test-core*
   "The core used in test mode"
   nil)
-
-(def test-config
-  "A map containing the test configuration"
-  (atom {}))
 
 (defn tap-stream
   "Called by `tap` to construct a stream which records events in *results*
@@ -138,10 +133,6 @@
      ; Set up time
      (time.controlled/with-controlled-time!
        (time.controlled/reset-time!)
-
-       ;; start a reaper if necessary
-       (if-let [reaper-config (:periodically-expire @test-config)]
-         (reaper/reaper reaper-config (atom *test-core*)))
        ;; Apply events
        (doseq [e events]
          (when-let [t (:time e)]

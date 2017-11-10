@@ -256,15 +256,14 @@
         res (atom nil)
         expired-stream (riemann.streams/expired
                         (fn [e] (reset! res e)))
+        reaper (reaper 0.1)
         core (logging/suppress
               ["riemann.core"
                "riemann.transport.tcp"
                "riemann.pubsub"]
-              (transition! (core) {:services []
+              (transition! (core) {:services [reaper]
                                    :streams [expired-stream]
                                    :index index}))]
-    (reset! config/core core)
-    (config/periodically-expire 0.1)
 
     ;; Insert events
     (index {:service 1 :ttl 0.05 :time (unix-time)})
@@ -286,15 +285,14 @@
         res (atom nil)
         expired-stream (riemann.streams/expired
                         (partial reset! res))
+        reaper (reaper 0.1 {:keep-keys [:tags]})
         core (logging/suppress
               ["riemann.core"
                "riemann.transport.tcp"
                "riemann.pubsub"]
-              (transition! (core) {:services []
+              (transition! (core) {:services [reaper]
                                    :streams [expired-stream]
                                    :index index}))]
-    (reset! config/core core)
-    (config/periodically-expire 0.1 {:keep-keys [:tags]})
 
     (index {:service 1 :ttl 0.05 :time 0 :tags ["hi"]})
     (advance! 0.11)
