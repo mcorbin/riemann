@@ -44,11 +44,11 @@
   (equiv? [s1 s2]
     (nil? s2)))
 
-(defrecord EveryTaskService [name equiv-key interval delay f core task]
+(defrecord ScheduledTaskService [name equiv-key interval delay f core task]
   ServiceEquiv
   (equiv? [this other]
           (and
-            (instance? EveryTaskService other)
+            (instance? ScheduledTaskService other)
             (= name (:name other))
             (= interval (:interval other))
             (= delay (:delay other))
@@ -56,7 +56,7 @@
   Service
   (conflict? [this other]
              (and
-               (instance? EveryTaskService other)
+               (instance? ScheduledTaskService other)
                (= name (:name other))))
 
   (reload! [this new-core]
@@ -124,9 +124,9 @@
   ([name equiv-key f]
    (ThreadService. name equiv-key f (atom nil) (atom false) (atom nil))))
 
-(defn every-task-service
+(defn scheduled-task-service
   ([name equiv-key interval delay f]
-   (EveryTaskService. name equiv-key interval delay f (atom nil) (atom nil))))
+   (ScheduledTaskService. name equiv-key interval delay f (atom nil) (atom nil))))
 
 (defmacro all-equal?
   "Takes two objects to compare and a list of forms to compare them by.

@@ -287,7 +287,7 @@
   ([interval opts]
    (let [interval  (or interval 10)
          keep-keys (get opts :keep-keys [:host :service])]
-     (service/every-task-service ::reaper keep-keys interval interval
+     (service/scheduled-task-service ::reaper keep-keys interval interval
        (fn worker [core]
          (when-let [i (:index core)]
            (doseq [state (index/expire i)]
