@@ -8,6 +8,7 @@
             [riemann.service :as service :refer [Service ServiceEquiv]]
             [riemann.index :as index :refer [Index]]
             [riemann.pubsub :as ps]
+            [riemann.test :as test]
             [riemann.instrumentation :as instrumentation]
             clojure.set))
 
@@ -32,7 +33,9 @@
   interval seconds, and sends their events to the core itself."
   [opts]
   (let [interval (long (* 1000 (get opts :interval 10)))
-        enabled? (get opts :enabled? true)]
+        enabled? (if-not test/*testing*
+                   (get opts :enabled? true)
+                   false)]
     (service/thread-service
       ::instrumentation [interval enabled?]
       (fn measure [core]

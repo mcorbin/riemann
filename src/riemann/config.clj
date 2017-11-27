@@ -249,7 +249,7 @@
    (fn delete [event] (core/delete-from-index @core fields event))))
 
 (defn periodically-expire
-  "Sets up a reaper for this core. See riemann.reaper/reaper."
+  "Sets up a reaper for this core. See riemann.core/reaper."
   ([]
    (periodically-expire 10))
   ([& args]

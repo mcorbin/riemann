@@ -8,6 +8,7 @@
   (:require [riemann.time.controlled :as time.controlled]
             [riemann.time :as time]
             [riemann.index :as index]
+            [riemann.service :as service]
             [riemann.streams :as streams]
             [clojure.test :as test]))
 
@@ -134,13 +135,15 @@
      (time.controlled/with-controlled-time!
        (time.controlled/reset-time!)
        ;; Apply events
+       (dorun (pmap #(riemann.service/reload! % *test-core*) (:services *test-core*)))
+       (dorun (pmap service/start! (:services *test-core*)))
        (doseq [e events]
          (when-let [t (:time e)]
            (time.controlled/advance! t))
 
          (doseq [stream streams]
            (stream e)))
-
+       (dorun (pmap service/stop! (:services *test-core*)))
        ;; Return captured events
        (->> *results*
             (reduce (fn [results [tap-name results-atom]]
