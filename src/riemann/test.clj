@@ -26,7 +26,7 @@
   "An atom to a map of tap names to information about the taps; e.g. file and
   line number, for preventing collisions." nil)
 
-(def ^:dynamic *test-core*
+(def ^:dynamic *core*
   "The core used in test mode"
   nil)
 
@@ -128,22 +128,22 @@
   riemann.time.controlled is global. Streams may be omitted, in which case
   inject! applies events to the *streams* dynamic var."
   ([events]
-   (inject! (:streams *test-core*) events))
+   (inject! (:streams *core*) events))
   ([streams events]
    (binding [*results* (fresh-results @*taps*)]
      ; Set up time
      (time.controlled/with-controlled-time!
        (time.controlled/reset-time!)
        ;; Apply events
-       (dorun (pmap #(riemann.service/reload! % *test-core*) (:services *test-core*)))
-       (dorun (pmap service/start! (:services *test-core*)))
+       (dorun (pmap #(riemann.service/reload! % *core*) (:services *core*)))
+       (dorun (pmap service/start! (:services *core*)))
        (doseq [e events]
          (when-let [t (:time e)]
            (time.controlled/advance! t))
 
          (doseq [stream streams]
            (stream e)))
-       (dorun (pmap service/stop! (:services *test-core*)))
+       (dorun (pmap service/stop! (:services *core*)))
        ;; Return captured events
        (->> *results*
             (reduce (fn [results [tap-name results-atom]]
@@ -174,8 +174,8 @@
   [name & body]
   `(test/deftest ~name
      (binding [*results* (fresh-results @*taps*)]
-       (if (:index *test-core*)
-         (index/clear (:index *test-core*)))
+       (if (:index *core*)
+         (index/clear (:index *core*)))
        (time.controlled/with-controlled-time!
          (time.controlled/reset-time!)
 

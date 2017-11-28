@@ -104,9 +104,9 @@
       (conflict? [this other]
         (= opts (:opts other)))
       (start! [this]
-        (if-not test/*testing*
-          (info "Starting kafka consumer")
-          (start-kafka-thread running? core opts)))
+        (when-not test/*testing*
+          (do (info "Starting kafka consumer")
+              (start-kafka-thread running? core opts))))
       (reload! [this new-core]
         (info "Reload called, setting new core value")
         (reset! core new-core))

@@ -181,7 +181,7 @@
            (reset! core new-core))
 
   (start! [this]
-          (if-not test/*testing*
+          (when-not test/*testing*
             (locking this
               (when-not @server
                 (reset! server (http/run-server (ws-handler core stats)

@@ -93,7 +93,7 @@
            (reset! core new-core))
 
   (start! [this]
-          (if-not test/*testing*
+          (when-not test/*testing*
             (locking ioutil-lock
               (locking this
                 (when-not @server
