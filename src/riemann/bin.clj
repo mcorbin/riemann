@@ -32,6 +32,25 @@
 
 (def reload-lock (Object.))
 
+(defn test-reload!
+  "Reloads the given configuration file by clearing the task scheduler, shutting
+  down the current core, and loading a new one."
+  []
+  (locking reload-lock
+    (try
+      (reset! riemann.config/core (riemann.core/core))
+      (reset! riemann.config/next-core (riemann.core/core))
+      (riemann.config/clear!)
+      (riemann.config/validate-config @config-file)
+      (riemann.time/reset-tasks!)
+      (riemann.config/include @config-file)
+      (reset! riemann.config/core @riemann.config/next-core)
+      (reset! riemann.test/core @riemann.config/core)
+      :reloaded
+      (catch Exception e
+        (error e "Couldn't reload:")
+        e))))
+
 (defn reload!
   "Reloads the given configuration file by clearing the task scheduler, shutting
   down the current core, and loading a new one."
@@ -129,8 +148,7 @@
               (test/with-test-env
                 (set-config-file! config)
                 (riemann.config/include @config-file)
-                (reset! riemann.config/core @riemann.config/next-core)
-                (binding [test/*core* @config/core]
+                (binding [test/*reload-fn* test-reload!]
                   (let [test-name-pattern (if test-name (re-pattern test-name) #".*-test")
                         results (run-tests test-name-pattern)]
                     (if (and (zero? (:error results))

@@ -26,9 +26,13 @@
   "An atom to a map of tap names to information about the taps; e.g. file and
   line number, for preventing collisions." nil)
 
-(def ^:dynamic *core*
-  "The core used in test mode"
+(def ^:dynamic *reload-fn*
+  "TODO"
   nil)
+
+(def core
+  "The core used in test mode"
+  (atom nil))
 
 (defn tap-stream
   "Called by `tap` to construct a stream which records events in *results*
@@ -128,22 +132,22 @@
   riemann.time.controlled is global. Streams may be omitted, in which case
   inject! applies events to the *streams* dynamic var."
   ([events]
-   (inject! (:streams *core*) events))
+   (inject! (:streams @core) events))
   ([streams events]
    (binding [*results* (fresh-results @*taps*)]
      ; Set up time
      (time.controlled/with-controlled-time!
        (time.controlled/reset-time!)
        ;; Apply events
-       (dorun (pmap #(riemann.service/reload! % *core*) (:services *core*)))
-       (dorun (pmap service/start! (:services *core*)))
+       (dorun (pmap #(riemann.service/reload! % @core) (:services @core)))
+       (dorun (pmap service/start! (:services @core)))
        (doseq [e events]
          (when-let [t (:time e)]
            (time.controlled/advance! t))
 
          (doseq [stream streams]
            (stream e)))
-       (dorun (pmap service/stop! (:services *core*)))
+       (dorun (pmap service/stop! (:services @core)))
        ;; Return captured events
        (->> *results*
             (reduce (fn [results [tap-name results-atom]]
@@ -173,13 +177,15 @@
       (is (= 1 (count (:some-tap rs))))))"
   [name & body]
   `(test/deftest ~name
-     (binding [*results* (fresh-results @*taps*)]
-       (if (:index *core*)
-         (index/clear (:index *core*)))
-       (time.controlled/with-controlled-time!
-         (time.controlled/reset-time!)
+     (binding [*taps* (atom {})]
+       (*reload-fn*)
+       (binding [*results* (fresh-results @*taps*)]
+         (if (:index @core)
+           (index/clear (:index @core)))
+         (time.controlled/with-controlled-time!
+           (time.controlled/reset-time!)
 
-         ~@body))))
+           ~@body)))))
 
 (defmacro tests
   "Declares a new namespace named [ns]-test, requires some clojure.test and
