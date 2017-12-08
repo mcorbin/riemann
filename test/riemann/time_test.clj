@@ -121,3 +121,7 @@
                  (is (< -0.005 
                         (- (/ (reduce + deltas) (count deltas)) interval)
                         0.005)))))))
+
+(deftest add-threads-test
+  (add-threads! 3)
+  (is (= 7 (count @threadpool))))

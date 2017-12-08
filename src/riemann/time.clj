@@ -182,6 +182,13 @@
       (Thread/sleep (* park-interval 100)))
     (reset! threadpool [])))
 
+(defn start-thread!
+  "Starts a thread to execute tasks on the queue automatically."
+  [i]
+  (let [^Runnable f (bound-fn [] (run-tasks! i))]
+    (doto (Thread. f (str "riemann task " i))
+      (.start))))
+
 (defn start!
   "Starts the threadpool to execute tasks on the queue automatically."
   []
@@ -189,8 +196,17 @@
     (stop!)
     (reset! running true)
     (reset! threadpool
-            (map (fn [i]
-                   (let [^Runnable f (bound-fn [] (run-tasks! i))]
-                     (doto (Thread. f (str "riemann task " i))
-                       (.start))))
+            (map start-thread!
                  (range thread-count)))))
+
+(defn add-threads!
+  "Adds `number-of-threads` threads to the threadpool"
+  [number-of-threads]
+  (locking threadpool
+    (swap! threadpool
+           (fn [current-threadpool]
+             (let [thread-count (count current-threadpool)
+                   new-threads (map start-thread!
+                                    (range thread-count
+                                           (+ thread-count number-of-threads)))]
+               (apply (partial conj current-threadpool) new-threads))))))
