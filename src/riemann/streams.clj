@@ -37,6 +37,7 @@
         clojure.tools.logging)
   (:require [riemann.folds :as folds]
             [riemann.index :as index]
+            [interval-metrics.core :as metrics]
             riemann.client
             riemann.logging
             [clojure.set :as set])
@@ -861,6 +862,23 @@
         (swap! sum add-sum m))
       (poller event))))
 
+(defn tick
+  [last-event r points]
+  (let [last-event @last-event
+        snapshot (metrics/snapshot! r)
+        events
+        (map
+         (fn [point]
+           (let [result (metrics/quantile snapshot point)]
+             (-> (assoc last-event :metric result)
+                 (update :service #(str % " " point)))))
+         points
+         )]
+                                        ; Forward event to children.
+    (doseq [event events]
+      (println event)
+      )))
+
 (defn percentiles
   "Over each period of interval seconds, aggregates events and selects one
   event from that period for each point. If point is 0, takes the lowest metric
@@ -869,12 +887,32 @@
   name has the point appended to it; e.g. 'response time' becomes 'response
   time 0.95'."
   [interval points & children]
-  (part-time-fast interval
-                (fn setup [] (atom []))
-                (fn add [r event] (swap! r conj event))
-                (fn finish [r start end]
-                  (let [samples (folds/sorted-sample @r points)]
-                    (doseq [event samples] (call-rescue event children))))))
+  (let [r (metrics/uniform-reservoir)
+        last-event (atom nil)
+        tick (fn tick
+               []
+               (let [last-event @last-event
+                     snapshot (metrics/snapshot! r)
+                     events
+                     (map
+                      (fn [point]
+                        (let [result (metrics/quantile snapshot point)]
+                          (-> (assoc last-event :metric result)
+                              (update :service #(str % " " point)))))
+                      points
+                      )]
+                                        ; Forward event to children.
+                 (doseq [event events]
+                   ;(println event)
+                   (call-rescue event children)
+                   )))
+        poller (periodically-until-expired interval interval tick)]
+    (fn stream
+      [event]
+      (when (:metric event)
+        (reset! last-event event)
+        (metrics/update! r (:metric event))
+        (poller event)))))
 
 (defn counter
   "Counts things. The first argument may be an initial counter value, which

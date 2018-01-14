@@ -1805,3 +1805,18 @@
       (s {:time 10 :ttl 2})
       (is (= @out [{:time 1 :ttl 5}
                    {:time 6 :ttl 2}])))))
+
+(deftest percentiles-test
+  ()
+  (test-stream-intervals
+   (percentiles 10 [0 0.5 1])
+
+   [{:service "foo" :metric 10 :ttl 100} 1
+    {:service "foo" :metric 0}  1
+    {:service "foo" :metric 4}  1
+    {:service "foo" :metric 5}  1
+    {:service "foo" :metric 10 :ttl 100} 11
+    ]
+   []
+   )
+  )
